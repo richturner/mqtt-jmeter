@@ -119,12 +119,11 @@ public class SubSampler extends AbstractMQTTSampler {
 	public SampleResult sample(Entry arg0) {
 		SampleResult result = new SampleResult();
 		result.setSampleLabel(getName());
-	
 		JMeterVariables vars = JMeterContextService.getContext().getVariables();
 		connection = (MQTTConnection) vars.getObject(getConnName());
 		clientId = (String) vars.getObject(getConnName()+"_clientId");
 		if (connection == null) {
-			return fillFailedResult(result, "500", "Subscribe failed because connection is not established.");
+			return produceResult(result, 503, "Subscribe failed because connection is not established");
 		}
 
 		// initial values
@@ -137,13 +136,13 @@ public class SubSampler extends AbstractMQTTSampler {
 				sampleCountTimeout = Integer.parseUnsignedInt(getSampleCountTimeout());
 			}
 		} catch (NumberFormatException e) {
-			return fillFailedResult(result, "510", "Unrecognized value for sample elapsed time or message count.");
+			return produceResult(result, 400, "Unrecognized value for sample elapsed time or message count");
 		}
 		
-		if (sampleByTime && sampleElapsedTime <=0 ) {
-			return fillFailedResult(result, "511", "Sample on elapsed time: must be greater than 0 ms.");
+		if (sampleByTime && sampleElapsedTime <=0) {
+			return produceResult(result, 400, "Sample on elapsed time: must be greater than 0 ms");
 		} else if (sampleCount < 1) {
-			return fillFailedResult(result, "512", "Sample on message count: must be greater than 0.");
+			return produceResult(result, 400, "Sample on message count: must be greater than 0");
 		}
 		
 		String topicsName = getTopic();
@@ -160,12 +159,21 @@ public class SubSampler extends AbstractMQTTSampler {
 				topics.add(topicsName);
 				topicsSubscribed.put(clientId, topics);
 				logger.fine("Listen to topic: " + topicsName);
+				result.sampleStart();
 				listenToTopics(topicsName);
 			}
 		}
 		
 		if (subFailed) {
-			return fillFailedResult(result, "501", "Failed to subscribe to topic(s):" + topicsName);
+			// avoid massive repeated "early stage" failures in a short period of time
+			// which probably overloads JMeter CPU and distorts test metrics such as TPS, avg response time
+			try {
+				TimeUnit.MILLISECONDS.sleep(SUB_FAIL_PENALTY);
+			} catch (InterruptedException e) {
+				logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
+			}
+
+			return produceResult(result, 405, "Failed to subscribe to topic(s):" + topicsName);
 		}
 
 		return doSample(result);
@@ -173,27 +181,26 @@ public class SubSampler extends AbstractMQTTSampler {
 
 	private SampleResult doSample(SampleResult result) {
 		JMeterVariables vars = JMeterContextService.getContext().getVariables();
-		final String topicsName= getTopic();
 		boolean sampleByTime = SAMPLE_ON_CONDITION_OPTION1.equals(getSampleCondition());
 
 		if (isAsync() && !asyncActive) {
 			asyncActive = true;
 			vars.putObject("sub", this); // save this sampler as thread local variable for response sampler
-			result.sampleStart();
-			return fillOKResult(result, 0, null, "");
+			return produceResult(result, 200, "Subscription created");
 		} else if (sampleByTime) {
 			try {
 				TimeUnit.MILLISECONDS.sleep(sampleElapsedTime);
 			} catch (InterruptedException e) {
 				logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
-				return fillFailedResult(result, "500", "Interrupted");
+				return produceResult(result, 408, "Interrupted");
 			}
 			synchronized (dataLock) {
 				result.sampleStart();
-				return produceResult(result, topicsName);
+				return produceResult(result, 200, null);
 			}
 		} else {
 			synchronized (dataLock) {
+				result.sampleStart();
 				int receivedCount = (batches.isEmpty() ? 0 : batches.element().getReceivedCount());
 				if (receivedCount < sampleCount) {
 					try {
@@ -214,16 +221,15 @@ public class SubSampler extends AbstractMQTTSampler {
 						}
 					} catch (InterruptedException e) {
 						logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
-						return fillFailedResult(result, "500", "Interrupted");
+						return produceResult(result, 408, "Interrupted");
 					}
 				}
 				receivedCount = (batches.isEmpty() ? 0 : batches.element().getReceivedCount());
 				if (receivedCount < sampleCount) {
 					result.setSampleCount(receivedCount);
-					return fillFailedResult(result, "502", MessageFormat.format("Timeout reached only received {0} message(s) but expected {1} on topic: {2}", receivedCount, sampleCount, topicsName));
+					return produceResult(result, 408, null);
 				}
-				result.sampleStart();
-				return produceResult(result, topicsName);
+				return produceResult(result, 200, null);
 			}
 		}
 	}
@@ -231,43 +237,49 @@ public class SubSampler extends AbstractMQTTSampler {
 	protected SampleResult produceAsyncResult(SampleResult result, boolean clearResponses) {
 		synchronized (dataLock) {
 			SampleResult result1 = doSample(result);
-			if (result1.isSuccessful() && clearResponses) {
+			if (clearResponses) {
 				batches.clear();
 			}
+			lockReleased = false;
 			return result1;
 		}
 	}
 
-	private SampleResult produceResult(SampleResult result, String topicName) {
+	private SampleResult produceResult(SampleResult result, int responseCode, String message) {
+		boolean sampleByTime = SAMPLE_ON_CONDITION_OPTION1.equals(getSampleCondition());
 		SubBean bean = batches.poll();
-		if(bean == null) { // In "elapsed time" mode, return "dummy" when time is reached
+
+		if (bean == null) {
 			bean = new SubBean();
 		}
+
 		int receivedCount = bean.getReceivedCount();
 		List<String> contents = bean.getContents();
-		String message = MessageFormat.format("Received {0} of message.", receivedCount);
+
+		if (message == null) {
+			if (sampleByTime) {
+				message = MessageFormat.format("Received {0} message(s) in {1}ms", receivedCount, sampleElapsedTime);
+			} else {
+				message = MessageFormat.format("Received {0} message(s) of expected {1} message(s)", receivedCount, sampleCount);
+			}
+		}
+
 		StringBuilder content = new StringBuilder();
 		if (isDebugResponse()) {
 			for (String s : contents) {
 				content.append(s).append("\n");
 			}
 		}
-		result = fillOKResult(result, bean.getReceivedMessageSize(), message, content.toString());
-		if (logger.isLoggable(Level.FINE)) {
-			logger.fine("sub [topic]: " + topicName + ", [payload]: " + content);
-		}
-		
-		if(receivedCount == 0) {
-			result.setEndTime(result.getStartTime()); // dummy result, rectify sample time
-		} else {
-			if (isAddTimestamp()) {
-				result.setEndTime(result.getStartTime() + (long) bean.getAvgElapsedTime()); // rectify sample time
-				result.setLatency((long) bean.getAvgElapsedTime());
-			} else {
-				result.setEndTime(result.getStartTime()); // received messages w/o timestamp, then we cannot reliably calculate elapsed time
-			}
-		}
+
+		result.setResponseCode(Integer.toString(responseCode));
+		// Any response code in 200 range is successful (like HTTP)
+		result.setSuccessful(responseCode / 100 == 2);
+		result.setResponseMessage(message);
+		result.setBodySize(bean.getReceivedMessageSize());
+		result.setBytes(bean.getReceivedMessageSize());
+		result.setResponseData(contents.toString().getBytes());
 		result.setSampleCount(receivedCount);
+		result.sampleEnd();
 
 		return result;
 	}
@@ -373,38 +385,4 @@ public class SubSampler extends AbstractMQTTSampler {
 		bean.setReceivedCount(bean.getReceivedCount() + 1);
 		return bean;
 	}
-
-	private SampleResult fillFailedResult(SampleResult result, String code, String message) {
-		result.sampleStart();
-		result.setResponseCode(code); // 5xx means various failures
-		result.setSuccessful(false);
-		result.setResponseMessage(message);
-		if (clientId != null) {
-			result.setResponseData(MessageFormat.format("Client [{0}]: {1}", clientId, message).getBytes());
-		} else {
-			result.setResponseData(message.getBytes());
-		}
-		result.sampleEnd();
-		
-		// avoid massive repeated "early stage" failures in a short period of time
-		// which probably overloads JMeter CPU and distorts test metrics such as TPS, avg response time
-		try {
-			TimeUnit.MILLISECONDS.sleep(SUB_FAIL_PENALTY);
-		} catch (InterruptedException e) {
-			logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
-		}
-		return result;
-	}
-
-	private SampleResult fillOKResult(SampleResult result, int size, String message, String contents) {
-		result.setResponseCode("200");
-		result.setSuccessful(true);
-		result.setResponseMessage(message);
-		result.setBodySize(size);
-		result.setBytes(size);
-		result.setResponseData(contents.getBytes());
-		result.sampleEnd();
-		return result;
-	}
-
 }
