@@ -219,7 +219,8 @@ public class SubSampler extends AbstractMQTTSampler {
 				}
 				receivedCount = (batches.isEmpty() ? 0 : batches.element().getReceivedCount());
 				if (receivedCount < sampleCount) {
-					return fillFailedResult(result, "502", "Failed: No message received on topic: " + topicsName + " (Timeout after " + sampleCountTimeout + "ms)");
+					result.setSampleCount(receivedCount);
+					return fillFailedResult(result, "502", MessageFormat.format("Timeout reached only received {0} message(s) but expected {1} on topic: {2}", receivedCount, sampleCount, topicsName));
 				}
 				result.sampleStart();
 				return produceResult(result, topicsName);
@@ -288,11 +289,29 @@ public class SubSampler extends AbstractMQTTSampler {
 
 		connection.subscribe(topicNames,
 				MQTTQoS.fromValue(qos),
-				() -> logger.fine(() -> "successful subscribed topics: " + String.join(", ", topicNames)),
+				() -> {
+					logger.fine(() -> "successful subscribed topics: " + String.join(", ", topicNames));
+					synchronized (dataLock) {
+						dataLock.notify();
+					}
+				},
 				error -> {
-					logger.log(Level.INFO, "subscribe failed", error);
+					logger.log(Level.INFO, "subscribe failed topics: " + topicsName, error);
 					subFailed = true;
+
+					synchronized (dataLock) {
+						dataLock.notify();
+					}
 				});
+
+		// Block until response
+		synchronized (dataLock) {
+			try {
+				dataLock.wait();
+			} catch (InterruptedException e) {
+				subFailed = true;
+			}
+		}
 	}
 	
 	private void setListener(final boolean sampleByTime, final int sampleCount) {

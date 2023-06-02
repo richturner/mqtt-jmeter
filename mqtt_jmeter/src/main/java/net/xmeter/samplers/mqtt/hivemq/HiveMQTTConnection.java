@@ -91,14 +91,21 @@ class HiveMQTTConnection implements MQTTConnection {
                 onFailure.accept(error);
             } else {
                 List<Mqtt3SubAckReturnCode> ackCodes = ack.getReturnCodes();
+                Throwable failure = null;
                 for (int i = 0; i < ackCodes.size(); i++) {
                     Mqtt3SubAckReturnCode ackCode = ackCodes.get(i);
                     if (ackCode.isError()) {
                         int index = i;
-                        logger.warning(() -> "Failed to subscribe " + topicNames[index] + " code: " + ackCode.name());
+                        String msg = "Failed to subscribe " + topicNames[index] + " code: " + ackCode.name();
+                        logger.warning(() -> msg);
+                        failure = new RuntimeException(msg);
                     }
                 }
-                onSuccess.run();
+                if (failure != null) {
+                    onFailure.accept(failure);
+                } else {
+                    onSuccess.run();
+                }
             }
         });
     }
