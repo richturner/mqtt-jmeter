@@ -22,9 +22,9 @@ public interface Constants {
 	String CONN_CLIENT_ID_PREFIX = "mqtt.client_id_prefix";
 	String CONN_CLIENT_ID_SUFFIX = "mqtt.client_id_suffix";
 	
-	String CONN_KEEP_ALIVE = "mqtt.conn_keep_alive";
-	String CONN_ATTEMPT_MAX = "mqtt.conn_attempt_max";
-	String CONN_RECONN_ATTEMPT_MAX = "mqtt.reconn_attempt_max";
+	public static final String CONN_KEEP_ALIVE = "mqtt.conn_keep_alive";
+	public static final String CONN_ATTEMPT_MAX = "mqtt.conn_attempt_max";
+	public static final String CONN_RECONN_ATTEMPT_MAX = "mqtt.reconn_attempt_max";
 	
 	String CONN_CLEAN_SESSION = "mqtt.conn_clean_session";
 	
@@ -84,9 +84,9 @@ public interface Constants {
 	
 	String DEFAULT_CONN_PREFIX_FOR_CONN = "conn_";
 	
-	String DEFAULT_CONN_KEEP_ALIVE = "300";
-	String DEFAULT_CONN_ATTEMPT_MAX = "0";
-	String DEFAULT_CONN_RECONN_ATTEMPT_MAX = "0";
+	public static final String DEFAULT_CONN_KEEP_ALIVE = "300";
+	public static final String DEFAULT_CONN_ATTEMPT_MAX = "0";
+	public static final String DEFAULT_CONN_RECONN_ATTEMPT_MAX = "0";
 	
 	String DEFAULT_SAMPLE_VALUE_COUNT = "1";
 	String DEFAULT_SAMPLE_VALUE_COUNT_TIMEOUT = "5000";
