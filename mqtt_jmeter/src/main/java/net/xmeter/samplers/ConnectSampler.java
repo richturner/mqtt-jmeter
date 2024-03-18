@@ -7,6 +7,7 @@ import java.util.logging.Logger;
 
 import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.SampleResult;
+import org.apache.jmeter.testelement.ThreadListener;
 import org.apache.jmeter.threads.JMeterContextService;
 import org.apache.jmeter.threads.JMeterVariables;
 
@@ -17,11 +18,10 @@ import net.xmeter.samplers.mqtt.MQTTClient;
 import net.xmeter.samplers.mqtt.MQTTConnection;
 import net.xmeter.samplers.mqtt.MQTTSsl;
 
-public class ConnectSampler extends AbstractMQTTSampler {
+public class ConnectSampler extends AbstractMQTTSampler implements ThreadListener {
 	private static final long serialVersionUID = 1859006013465470528L;
 	private static final Logger logger = Logger.getLogger(ConnectSampler.class.getCanonicalName());
-
-	private transient MQTTClient client;
+	protected static final ThreadLocal<MQTTConnection> threadLocalConnection = new ThreadLocal<>();
 
 	@Override
 	public SampleResult sample(Entry entry) {
@@ -86,7 +86,7 @@ public class ConnectSampler extends AbstractMQTTSampler {
 		}
 		
 		try {
-			client = MQTT.getInstance(getMqttClientName()).createClient(parameters);
+			MQTTClient client = MQTT.getInstance(getMqttClientName()).createClient(parameters);
 
 			result.sampleStart();
 			connection = client.connect();
@@ -95,6 +95,7 @@ public class ConnectSampler extends AbstractMQTTSampler {
 			if (connection.isConnectionSucc()) {
 				vars.putObject(getConnName(), connection); // save connection object as thread local variable !!
 				vars.putObject(getConnName()+"_clientId", client.getClientId());	//save client id as thread local variable
+				threadLocalConnection.set(connection);
 				setTopicSubscribed(client.getClientId(), new HashSet<>());
 				result.setSuccessful(true);
 				result.setResponseData("Successful.".getBytes());
@@ -112,11 +113,27 @@ public class ConnectSampler extends AbstractMQTTSampler {
 			if (result.getEndTime() == 0) result.sampleEnd(); //avoid re-enter sampleEnd()
 			result.setSuccessful(false);
 			result.setResponseMessage(MessageFormat.format("Failed to establish Connection {0}.", connection));
-			result.setResponseData(MessageFormat.format("Client [{0}] failed with exception.", client.getClientId()).getBytes());
+			result.setResponseData(MessageFormat.format("Client [{0}] failed with exception.", clientId).getBytes());
 			result.setResponseCode("502");
 		}
 		
 		return result;
 	}
 
+	@Override
+	public void threadStarted() {
+	}
+
+	@Override
+	public void threadFinished() {
+		MQTTConnection connection = threadLocalConnection.get();
+		if (connection != null) {
+			logger.log(Level.INFO, "Test thread finished: closing MQTT connection");
+			try {
+				connection.disconnect();
+			} catch (Exception e) {
+				logger.log(Level.WARNING, "Closing MQTT connection failed", e);
+			}
+		}
+	}
 }
