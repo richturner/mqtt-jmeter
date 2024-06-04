@@ -25,7 +25,6 @@ public class SubSampler extends AbstractMQTTSampler {
 	private int sampleCount = 1;
 	private int sampleCountTimeout = 5000;
 	private boolean printFlag = false;
-	private boolean asyncActive = false;
 	private final transient Object responseLock = new Object();
 	private boolean lockReleased = false;
 
@@ -163,15 +162,14 @@ public class SubSampler extends AbstractMQTTSampler {
 			return produceResult(result, 405, "Failed to subscribe to topic(s):" + topicsName);
 		}
 
-		return doSample(result);
+		return doSample(result, false);
 	}
 
 	@SuppressWarnings("unchecked")
-	private SampleResult doSample(SampleResult result) {
+	private SampleResult doSample(SampleResult result, boolean isAsyncCallback) {
 		boolean sampleByTime = SAMPLE_ON_CONDITION_OPTION1.equals(getSampleCondition());
 
-		if (isAsync() && !asyncActive) {
-			asyncActive = true;
+		if (isAsync() && !isAsyncCallback) {
 			JMeterVariables vars = JMeterContextService.getContext().getVariables();
 			vars.putObject("sub", this); // save this sampler as thread local variable for response sampler
 			result.sampleEnd();
@@ -229,7 +227,7 @@ public class SubSampler extends AbstractMQTTSampler {
 
 	@SuppressWarnings("unchecked")
 	protected SampleResult produceAsyncResult(SampleResult result) {
-		SampleResult result1 = doSample(result);
+		SampleResult result1 = doSample(result, true);
 		JMeterVariables vars = JMeterContextService.getContext().getVariables();
 		vars.remove("responses");
 		return result1;
