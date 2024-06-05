@@ -214,6 +214,8 @@ public class SubSampler extends AbstractMQTTSampler {
 					logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
 					result.sampleEnd();
 					return produceResult(result, 408, "Interrupted");
+				} finally {
+					lockReleased = false;
 				}
 			}
 			receivedCount = (batches.isEmpty() ? 0 : batches.element().getReceivedCount());
