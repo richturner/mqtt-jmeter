@@ -3,6 +3,7 @@ package net.xmeter.samplers.mqtt.hivemq;
 import java.io.File;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
 import javax.net.ssl.TrustManagerFactory;
@@ -41,7 +42,8 @@ class HiveMQTTFactory implements MQTTFactory {
     @Override
     public MQTTSsl createSsl(AbstractMQTTSampler sampler) throws Exception {
         MqttClientSslConfigBuilder sslBuilder = MqttClientSslConfig.builder()
-                .protocols(Collections.singletonList("TLSv1.2"));
+                .protocols(Collections.singletonList("TLSv1.2"))
+                .handshakeTimeout(Long.parseLong(sampler.getConnTimeout()), TimeUnit.SECONDS);
 
         //As the purpose is server performance testing, we make the assumption that 
         //server side certificate is always valid.
