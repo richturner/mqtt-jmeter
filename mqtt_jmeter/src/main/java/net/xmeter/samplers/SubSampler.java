@@ -133,13 +133,14 @@ public class SubSampler extends AbstractMQTTSampler {
 		String topicsName = getTopic();
 		final ConcurrentLinkedQueue<SubBean> batches = new ConcurrentLinkedQueue<>();
 		vars.putObject("responses", batches);
+		lockReleased = false;
 
 		connection.setSubListener(((topic, message, ack) -> {
 			ack.run();
 			logger.info("Received message on topic: " + topic);
 			SubBean bean = handleSubBean(batches, sampleByTime, message, sampleCount);
 
-			if(!sampleByTime && bean.getReceivedCount() == sampleCount) {
+			if(!sampleByTime && bean.getReceivedCount() >= sampleCount) {
 				synchronized (responseLock) {
 					lockReleased = true;
 					responseLock.notify();
@@ -214,8 +215,6 @@ public class SubSampler extends AbstractMQTTSampler {
 					logger.log(Level.INFO, "Received exception when waiting for notification signal", e);
 					result.sampleEnd();
 					return produceResult(result, 408, "Interrupted");
-				} finally {
-					lockReleased = false;
 				}
 			}
 			receivedCount = (batches.isEmpty() ? 0 : batches.element().getReceivedCount());
